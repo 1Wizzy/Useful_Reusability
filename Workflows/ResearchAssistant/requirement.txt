@@ -1,0 +1,6 @@
+langchain
+langgraph
+langchain-google-genai
+pydantic
+requests
+tenacity
