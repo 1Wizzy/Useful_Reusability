@@ -85,6 +85,17 @@ class BilibiliLiveStreamExtractor:
         }
 
     def extract_room_id(self, url):
+        # Resolve b23.tv short URLs by following the redirect.
+        # Use GET with stream=True so we only fetch headers without downloading the body,
+        # which is more reliable than HEAD for servers that don't honour HEAD redirects.
+        # On any network error we fall through and let the original URL fail gracefully.
+        if "b23.tv" in url:
+            try:
+                resp = self.session.get(url, allow_redirects=True, stream=True, timeout=10)
+                resp.close()
+                url = resp.url
+            except requests.RequestException:
+                pass
         if "live.bilibili.com" in url:
             room_id = re.search(r"/(\d+)", url)
             if room_id:
@@ -213,9 +224,10 @@ def main(live_url, all_stream):
         return
 
     print(f"房间号: {room_id}")
-    print(
-        f"标题: {room_info.get('title','Unknown')} 主播: {room_info.get('new_pendants').get('badge').get('desc', 'Unknown')}"
-    )
+    new_pendants = room_info.get("new_pendants")
+    badge = new_pendants.get("badge") if isinstance(new_pendants, dict) else None
+    host_name = badge.get("desc", "Unknown") if isinstance(badge, dict) else "Unknown"
+    print(f"标题: {room_info.get('title', 'Unknown')} 主播: {host_name}")
     if room_info.get("live_status") != 1:
         print("❌ 未开播")
         return
