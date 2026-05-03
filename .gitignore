@@ -219,3 +219,6 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 module-6/deployment/docker-compose.yml
+
+# Bilibili saved login cookies (contain sensitive credentials)
+Scripts/bilibili_cookies.json

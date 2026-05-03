@@ -3,11 +3,15 @@
 B站直播流链接抓取工具 + 扫码登录
 """
 
+import json
+import os
 import requests
 import re
 import time
 import argparse
 import qrcode_terminal
+
+COOKIES_FILE = os.path.join(os.path.dirname(__file__), "bilibili_cookies.json")
 
 
 class BilibiliQRCodeLogin:
@@ -26,7 +30,50 @@ class BilibiliQRCodeLogin:
             }
         )
 
+    def load_cookies(self):
+        """Load saved cookies from disk, return dict or None."""
+        if os.path.exists(COOKIES_FILE):
+            try:
+                with open(COOKIES_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, OSError):
+                pass
+        return None
+
+    def save_cookies(self, cookies):
+        """Persist cookies to disk for future runs."""
+        try:
+            with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+                json.dump(cookies, f)
+            os.chmod(COOKIES_FILE, 0o600)
+        except OSError as e:
+            print(f"⚠️ 无法保存 Cookie：{e}")
+
+    def verify_cookies(self, cookies):
+        """Return True when the saved cookies are still valid."""
+        try:
+            resp = requests.get(
+                "https://api.bilibili.com/x/web-interface/nav",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36",
+                    "Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items()),
+                },
+                timeout=10,
+            )
+            data = resp.json()
+            return data.get("code") == 0 and data.get("data", {}).get("isLogin", False)
+        except Exception:
+            return False
+
     def login(self, timeout=180, interval=3):
+        # Try to reuse saved cookies first
+        saved = self.load_cookies()
+        if saved and self.verify_cookies(saved):
+            print("✅ 已使用保存的登录状态，无需重新扫码")
+            return saved
+
         resp = self.session.get(self.GEN_URL)
         data = resp.json()
         qrcode_key, url = data["data"]["qrcode_key"], data["data"]["url"]
@@ -49,7 +96,9 @@ class BilibiliQRCodeLogin:
                 print("✅ 已扫码，等待确认…")
             elif code == 0:
                 print("🎉 登录成功！")
-                return self.session.cookies.get_dict()
+                cookies = self.session.cookies.get_dict()
+                self.save_cookies(cookies)
+                return cookies
             elif code == 86038:
                 print("❌ 二维码已失效，请重新生成")
                 return None
@@ -71,8 +120,8 @@ class BilibiliLiveStreamExtractor:
             }
         )
         if cookies:
-            cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
-            self.session.headers.update({"Cookie": cookie_header})
+            from requests.cookies import cookiejar_from_dict
+            self.session.cookies.update(cookiejar_from_dict(cookies))
 
         self.quality_map = {
             30000: "杜比",
@@ -86,7 +135,10 @@ class BilibiliLiveStreamExtractor:
 
     def extract_room_id(self, url):
         if "live.bilibili.com" in url:
-            room_id = re.search(r"/(\d+)", url)
+            # Support both desktop and h5 URLs, e.g.:
+            #   https://live.bilibili.com/27263119
+            #   https://live.bilibili.com/h5/27263119?...
+            room_id = re.search(r"live\.bilibili\.com(?:/h5)?/(\d+)", url)
             if room_id:
                 return room_id.group(1)
         return None
@@ -213,9 +265,10 @@ def main(live_url, all_stream):
         return
 
     print(f"房间号: {room_id}")
-    print(
-        f"标题: {room_info.get('title','Unknown')} 主播: {room_info.get('new_pendants').get('badge').get('desc', 'Unknown')}"
-    )
+    new_pendants = room_info.get("new_pendants") or {}
+    badge = new_pendants.get("badge") or {}
+    broadcaster = badge.get("desc", "Unknown")
+    print(f"标题: {room_info.get('title', 'Unknown')} 主播: {broadcaster}")
     if room_info.get("live_status") != 1:
         print("❌ 未开播")
         return
